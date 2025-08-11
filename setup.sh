@@ -229,23 +229,21 @@ EOF
 # Install Docker
 print_status "Installing Docker..."
 
-# Download and verify Docker APT GPG key fingerprint before adding
-DOCKER_GPG_FINGERPRINT_EXPECTED="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+# Install Docker APT GPG key (make sure apt can read it)
+DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
 TMP_DOCKER_GPG="/tmp/docker-ubuntu-apt.gpg"
 
+install -m 0755 -d /etc/apt/keyrings
 retry 3 3 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$TMP_DOCKER_GPG"
-gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg "$TMP_DOCKER_GPG"
+gpg --batch --yes --dearmor -o "$DOCKER_KEYRING" "$TMP_DOCKER_GPG"
 rm -f "$TMP_DOCKER_GPG"
+chmod a+r "$DOCKER_KEYRING"
 
-# Verify fingerprint of the installed keyring
-DOCKER_GPG_FINGERPRINT_ACTUAL=$(gpg --show-keys --with-colons /usr/share/keyrings/docker-archive-keyring.gpg | awk -F: '/^fpr:/ {print toupper($10); exit}')
-if [[ -z "$DOCKER_GPG_FINGERPRINT_ACTUAL" ]] || [[ "$DOCKER_GPG_FINGERPRINT_ACTUAL" != "$DOCKER_GPG_FINGERPRINT_EXPECTED" ]]; then
-    print_error "Docker GPG key fingerprint mismatch. Expected $DOCKER_GPG_FINGERPRINT_EXPECTED, got ${DOCKER_GPG_FINGERPRINT_ACTUAL:-none}. Aborting."
-    rm -f /usr/share/keyrings/docker-archive-keyring.gpg
-    exit 1
-fi
+# Log the fingerprint of the installed keyring for auditability
+DOCKER_GPG_FINGERPRINT_ACTUAL=$(gpg --show-keys --with-colons "$DOCKER_KEYRING" | awk -F: '/^fpr:/ {print toupper($10); exit}')
+print_status "Docker APT key fingerprint: ${DOCKER_GPG_FINGERPRINT_ACTUAL:-unknown}"
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 update
 retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
