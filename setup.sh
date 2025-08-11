@@ -405,8 +405,8 @@ EOF
 
 chmod +x /usr/local/bin/server-health-check.sh
 
-# Add health check to crontab
-(crontab -l 2>/dev/null; echo "0 */6 * * * /usr/local/bin/server-health-check.sh") | crontab -
+# Add health check to crontab for root user
+(crontab -l 2>/dev/null || true; echo "0 */6 * * * /usr/local/bin/server-health-check.sh") | crontab -u root -
 
 # Install and configure chrony for time synchronization
 print_status "Configuring time synchronization..."
