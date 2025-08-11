@@ -5,8 +5,9 @@ Automated server setup scripts for Ubuntu 22.04/24.04 LTS, optimized for Docker-
 ## 🚀 Quick Start
 
 ```bash
-# Download and run the setup script
-wget https://raw.githubusercontent.com/yourusername/ubuntu-scripts/main/setup.sh
+# Download and run the setup script from /tmp
+cd /tmp
+wget -O setup.sh https://raw.githubusercontent.com/geetfun/ubuntu-scripts/main/setup.sh
 chmod +x setup.sh
 sudo ./setup.sh
 ```
@@ -53,7 +54,7 @@ sudo ./setup.sh
 Run the script and follow the prompts:
 
 ```bash
-sudo ./setup.sh
+sudo /tmp/setup.sh
 ```
 
 You'll be asked for:
@@ -69,7 +70,7 @@ Set environment variables before running:
 export DEPLOY_USER="deploy"
 export SSH_PORT="2222"
 export YOUR_SSH_PUBLIC_KEY="ssh-ed25519 AAAA..."
-sudo -E ./setup.sh
+sudo -E /tmp/setup.sh
 ```
 
 ## 📁 Project Structure
@@ -212,7 +213,7 @@ Test the script on a fresh VPS:
 
 ```bash
 # Create a snapshot first!
-sudo ./setup.sh --dry-run  # Coming soon
+sudo /tmp/setup.sh --dry-run  # Coming soon
 ```
 
 ## ⚠️ Important Notes
@@ -242,6 +243,6 @@ For issues or questions:
 
 ---
 
-**Version:** 1.0.0  
-**Tested on:** Ubuntu 22.04 LTS, Ubuntu 24.04 LTS  
+**Version:** 1.0.0
+**Tested on:** Ubuntu 22.04 LTS, Ubuntu 24.04 LTS
 **Last Updated:** 2025
