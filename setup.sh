@@ -28,11 +28,35 @@ print_warning() {
     echo -e "${YELLOW}[!]${NC} $1"
 }
 
+# Retry helper with constant backoff
+retry() {
+    local max_attempts="$1"; shift
+    local sleep_seconds="$1"; shift
+    local attempt=1
+    while (( attempt <= max_attempts )); do
+        if "$@"; then
+            return 0
+        fi
+        print_warning "Attempt ${attempt}/${max_attempts} failed: $*"
+        (( attempt++ ))
+        sleep "$sleep_seconds"
+    done
+    return 1
+}
+
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
    print_error "This script must be run as root"
    exit 1
 fi
+
+# Enable file logging (after root check to ensure permissions)
+umask 027
+LOG_FILE="/var/log/server-setup.log"
+mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Interactive prompt for SSH public key
 print_status "SSH Key Setup"
@@ -49,9 +73,14 @@ if [[ -z "$YOUR_SSH_PUBLIC_KEY" ]]; then
     exit 1
 fi
 
-if [[ ! "$YOUR_SSH_PUBLIC_KEY" =~ ^(ssh-rsa|ssh-ed25519|ecdsa-sha2|ssh-dss) ]]; then
-    print_error "Invalid SSH key format. Key should start with ssh-rsa, ssh-ed25519, ecdsa-sha2, or ssh-dss"
+if [[ ! "$YOUR_SSH_PUBLIC_KEY" =~ ^(ssh-ed25519|ecdsa-sha2|ssh-rsa) ]]; then
+    print_error "Invalid SSH key format. Key should start with ssh-ed25519, ecdsa-sha2, or ssh-rsa"
     exit 1
+fi
+
+# Optional: nudge users away from RSA to ed25519
+if [[ "$YOUR_SSH_PUBLIC_KEY" =~ ^ssh-rsa ]]; then
+    print_warning "RSA keys are accepted, but ssh-ed25519 is recommended for new keys."
 fi
 
 # Optional: Ask for custom SSH port
@@ -85,14 +114,14 @@ print_status "Starting Hetzner VPS setup for Kamal deployment..."
 
 # Update system
 print_status "Updating system packages..."
-apt-get update
-apt-get upgrade -y
-apt-get dist-upgrade -y
+retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 update
+retry 2 10 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 upgrade -y
+retry 2 10 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 dist-upgrade -y
 apt-get autoremove -y
 
 # Install essential packages
 print_status "Installing essential packages..."
-apt-get install -y \
+retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 install -y \
     curl \
     wget \
     vim \
@@ -199,10 +228,26 @@ EOF
 
 # Install Docker
 print_status "Installing Docker..."
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Download and verify Docker APT GPG key fingerprint before adding
+DOCKER_GPG_FINGERPRINT_EXPECTED="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+TMP_DOCKER_GPG="/tmp/docker-ubuntu-apt.gpg"
+
+retry 3 3 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$TMP_DOCKER_GPG"
+gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg "$TMP_DOCKER_GPG"
+rm -f "$TMP_DOCKER_GPG"
+
+# Verify fingerprint of the installed keyring
+DOCKER_GPG_FINGERPRINT_ACTUAL=$(gpg --show-keys --with-colons /usr/share/keyrings/docker-archive-keyring.gpg | awk -F: '/^fpr:/ {print toupper($10); exit}')
+if [[ -z "$DOCKER_GPG_FINGERPRINT_ACTUAL" ]] || [[ "$DOCKER_GPG_FINGERPRINT_ACTUAL" != "$DOCKER_GPG_FINGERPRINT_EXPECTED" ]]; then
+    print_error "Docker GPG key fingerprint mismatch. Expected $DOCKER_GPG_FINGERPRINT_EXPECTED, got ${DOCKER_GPG_FINGERPRINT_ACTUAL:-none}. Aborting."
+    rm -f /usr/share/keyrings/docker-archive-keyring.gpg
+    exit 1
+fi
+
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 update
+retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 # Add deploy user to docker group
 usermod -aG docker $DEPLOY_USER
@@ -367,7 +412,7 @@ chmod +x /usr/local/bin/server-health-check.sh
 
 # Install and configure chrony for time synchronization
 print_status "Configuring time synchronization..."
-apt-get install -y chrony
+retry 3 5 apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=120 install -y chrony
 systemctl enable chrony
 systemctl start chrony
 
