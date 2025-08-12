@@ -395,25 +395,53 @@ setup_swap() {
     # Get total RAM in MB
     TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
     
-    # Determine swap size based on RAM
+    # Get available disk space in MB (excluding reserved blocks)
+    AVAILABLE_DISK_MB=$(df -BM / | awk 'NR==2 {print int($4)}')
+    
+    # Calculate 10% of available disk space as maximum swap size
+    MAX_SWAP_FROM_DISK=$((AVAILABLE_DISK_MB / 10))
+    
+    # Determine ideal swap size based on RAM
     if [ "$TOTAL_RAM_MB" -le 2048 ]; then
         # 2GB or less: 2x RAM
-        SWAP_SIZE_MB=$((TOTAL_RAM_MB * 2))
+        IDEAL_SWAP_MB=$((TOTAL_RAM_MB * 2))
     elif [ "$TOTAL_RAM_MB" -le 4096 ]; then
         # 2-4GB: Equal to RAM
-        SWAP_SIZE_MB=$TOTAL_RAM_MB
+        IDEAL_SWAP_MB=$TOTAL_RAM_MB
     elif [ "$TOTAL_RAM_MB" -le 8192 ]; then
         # 4-8GB: 4GB swap
-        SWAP_SIZE_MB=4096
+        IDEAL_SWAP_MB=4096
     else
         # 8GB+: 4GB swap (can be adjusted based on needs)
-        SWAP_SIZE_MB=4096
+        IDEAL_SWAP_MB=4096
     fi
     
-    print_status "Creating ${SWAP_SIZE_MB}MB swap file (System RAM: ${TOTAL_RAM_MB}MB)..."
+    # Use the smaller of ideal swap or 10% of available disk
+    if [ "$IDEAL_SWAP_MB" -gt "$MAX_SWAP_FROM_DISK" ]; then
+        SWAP_SIZE_MB=$MAX_SWAP_FROM_DISK
+        print_warning "Limited swap to ${SWAP_SIZE_MB}MB (10% of ${AVAILABLE_DISK_MB}MB available disk)"
+    else
+        SWAP_SIZE_MB=$IDEAL_SWAP_MB
+    fi
     
-    # Create swap file
-    fallocate -l ${SWAP_SIZE_MB}M /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_SIZE_MB status=progress
+    # Ensure minimum viable swap (at least 512MB) or skip if not enough space
+    if [ "$SWAP_SIZE_MB" -lt 512 ]; then
+        print_warning "Insufficient disk space for swap (need at least 512MB, have ${SWAP_SIZE_MB}MB available)"
+        print_warning "Skipping swap creation - system will run without swap"
+        return 0
+    fi
+    
+    print_status "Creating ${SWAP_SIZE_MB}MB swap file (System RAM: ${TOTAL_RAM_MB}MB, Available disk: ${AVAILABLE_DISK_MB}MB)..."
+    
+    # Create swap file - try fallocate first, fall back to dd
+    if ! fallocate -l ${SWAP_SIZE_MB}M /swapfile 2>/dev/null; then
+        print_warning "fallocate failed, using dd instead (this may take longer)..."
+        if ! dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_SIZE_MB status=progress 2>/dev/null; then
+            print_error "Failed to create swap file - insufficient disk space"
+            rm -f /swapfile 2>/dev/null
+            return 1
+        fi
+    fi
     
     # Set correct permissions
     chmod 600 /swapfile
