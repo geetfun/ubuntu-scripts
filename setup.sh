@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Configuration variables - CHANGE THESE!
 DEPLOY_USER="deploy"
-DEPLOY_PASSWORD="$(openssl rand -base64 32)"
+DEPLOY_PASSWORD=""  # Will be set via prompt
 SSH_PORT="22"  # Consider changing to non-standard port like 2222
 
 # Colors for output
@@ -97,11 +97,31 @@ if [[ ! -z "$CUSTOM_DEPLOY_USER" ]] && [[ "$CUSTOM_DEPLOY_USER" =~ ^[a-z_][a-z0-
     DEPLOY_USER="$CUSTOM_DEPLOY_USER"
 fi
 
+# Prompt for deploy user password
+echo ""
+while true; do
+    read -s -p "Enter password for $DEPLOY_USER user: " DEPLOY_PASSWORD
+    echo
+    read -s -p "Confirm password: " DEPLOY_PASSWORD_CONFIRM
+    echo
+    
+    if [[ "$DEPLOY_PASSWORD" == "$DEPLOY_PASSWORD_CONFIRM" ]]; then
+        if [[ ${#DEPLOY_PASSWORD} -lt 8 ]]; then
+            print_warning "Password must be at least 8 characters long. Please try again."
+        else
+            break
+        fi
+    else
+        print_warning "Passwords do not match. Please try again."
+    fi
+done
+
 echo ""
 print_status "Configuration Summary:"
 echo "  Deploy User: $DEPLOY_USER"
 echo "  SSH Port: $SSH_PORT"
 echo "  SSH Key: ${YOUR_SSH_PUBLIC_KEY:0:50}..."
+echo "  Password: [set by user]"
 echo ""
 read -p "Continue with setup? (y/n): " -n 1 -r
 echo ""
@@ -178,10 +198,11 @@ else
     print_warning "Deploy user already exists, skipping..."
 fi
 
-# Configure sudoers for deploy user (narrowly scoped passwordless sudo)
+# Configure sudoers for deploy user (full sudo access with password)
 print_status "Configuring sudo access..."
 cat > /etc/sudoers.d/deploy << EOF
-$DEPLOY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart docker, /usr/bin/journalctl -u docker
+# Allow deploy user to use sudo with password for all commands
+$DEPLOY_USER ALL=(ALL:ALL) ALL
 EOF
 chmod 0440 /etc/sudoers.d/deploy
 
@@ -422,16 +443,15 @@ SERVER SETUP COMPLETE - SAVE THIS INFORMATION
 ==============================================
 
 Deploy User: $DEPLOY_USER
-Deploy Password: $DEPLOY_PASSWORD
+Deploy Password: [Password set during installation]
 SSH Port: $SSH_PORT
 
 IMPORTANT NEXT STEPS:
 1. Test SSH access: ssh -p $SSH_PORT $DEPLOY_USER@$(curl -s ifconfig.me)
-2. Once confirmed working, disable root login completely
-3. Change the deploy user password: passwd $DEPLOY_USER
-4. Configure your domain's DNS to point to this server
-5. Update Kamal's deploy.yml with this server's IP
-6. Configure Hetzner Cloud Firewall to allow ports 22 (or $SSH_PORT), 80, and 443
+2. Once confirmed working, you can now use 'sudo su -' to switch to root
+3. Configure your domain's DNS to point to this server
+4. Update Kamal's deploy.yml with this server's IP
+5. Configure Hetzner Cloud Firewall to allow ports 22 (or $SSH_PORT), 80, and 443
 
 SECURITY FEATURES ENABLED:
 - Fail2ban (SSH and Docker protection)
