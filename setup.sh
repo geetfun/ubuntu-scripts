@@ -383,6 +383,63 @@ EOF
 
 sysctl -p /etc/sysctl.d/99-security.conf
 
+# Configure swap file based on system RAM
+print_status "Configuring swap space..."
+setup_swap() {
+    # Check if swap already exists
+    if swapon --show | grep -q '/swapfile'; then
+        print_warning "Swap file already exists, skipping..."
+        return 0
+    fi
+    
+    # Get total RAM in MB
+    TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+    
+    # Determine swap size based on RAM
+    if [ "$TOTAL_RAM_MB" -le 2048 ]; then
+        # 2GB or less: 2x RAM
+        SWAP_SIZE_MB=$((TOTAL_RAM_MB * 2))
+    elif [ "$TOTAL_RAM_MB" -le 4096 ]; then
+        # 2-4GB: Equal to RAM
+        SWAP_SIZE_MB=$TOTAL_RAM_MB
+    elif [ "$TOTAL_RAM_MB" -le 8192 ]; then
+        # 4-8GB: 4GB swap
+        SWAP_SIZE_MB=4096
+    else
+        # 8GB+: 4GB swap (can be adjusted based on needs)
+        SWAP_SIZE_MB=4096
+    fi
+    
+    print_status "Creating ${SWAP_SIZE_MB}MB swap file (System RAM: ${TOTAL_RAM_MB}MB)..."
+    
+    # Create swap file
+    fallocate -l ${SWAP_SIZE_MB}M /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_SIZE_MB status=progress
+    
+    # Set correct permissions
+    chmod 600 /swapfile
+    
+    # Make it a swap file
+    mkswap /swapfile
+    
+    # Enable the swap file
+    swapon /swapfile
+    
+    # Make swap permanent
+    if ! grep -q '/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    
+    # Configure swappiness (10 is good for servers, reduces swap usage)
+    echo 'vm.swappiness=10' >> /etc/sysctl.d/99-swap.conf
+    echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.d/99-swap.conf
+    sysctl -p /etc/sysctl.d/99-swap.conf
+    
+    print_status "Swap configuration complete"
+}
+
+# Run swap setup
+setup_swap
+
 # Set up log rotation for Docker containers
 print_status "Configuring Docker log rotation..."
 cat > /etc/logrotate.d/docker << 'EOF'
